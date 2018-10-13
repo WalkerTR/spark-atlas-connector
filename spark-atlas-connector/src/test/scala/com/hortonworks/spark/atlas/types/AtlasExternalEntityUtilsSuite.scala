@@ -20,13 +20,10 @@ package com.hortonworks.spark.atlas.types
 import java.nio.file.Files
 
 import scala.collection.JavaConverters._
-
-import org.apache.atlas.AtlasClient
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.types._
 import org.scalatest.{BeforeAndAfterAll, FunSuite, Matchers}
-
-import com.hortonworks.spark.atlas.{AtlasClientConf, TestUtils}
+import com.hortonworks.spark.atlas.{AtlasClient, AtlasClientConf, TestUtils}
 
 class AtlasExternalEntityUtilsSuite extends FunSuite with Matchers with BeforeAndAfterAll {
   import TestUtils._
@@ -64,7 +61,7 @@ class AtlasExternalEntityUtilsSuite extends FunSuite with Matchers with BeforeAn
     dbEntity.getTypeName should be (external.HIVE_DB_TYPE_STRING)
     dbEntity.getAttribute("name") should be ("db1")
     dbEntity.getAttribute("location") should be (dbDefinition.locationUri.toString)
-    dbEntity.getAttribute(AtlasClient.REFERENCEABLE_ATTRIBUTE_NAME) should be ("db1@primary")
+    dbEntity.getAttribute("qualifiedName") should be ("db1@primary")
   }
 
   test("convert catalog storage format to hive entity") {
@@ -79,7 +76,7 @@ class AtlasExternalEntityUtilsSuite extends FunSuite with Matchers with BeforeAn
     sdEntity.getAttribute("outputFormat") should be (null)
     sdEntity.getAttribute("name") should be (null)
     sdEntity.getAttribute("compressed") should be (java.lang.Boolean.FALSE)
-    sdEntity.getAttribute(AtlasClient.REFERENCEABLE_ATTRIBUTE_NAME) should be (
+    sdEntity.getAttribute("qualifiedName") should be (
       "db1.tbl1@primary_storage")
   }
 
@@ -93,12 +90,12 @@ class AtlasExternalEntityUtilsSuite extends FunSuite with Matchers with BeforeAn
 
     schemaEntities(0).getAttribute("name") should be ("user")
     schemaEntities(0).getAttribute("type") should be ("string")
-    schemaEntities(0).getAttribute(AtlasClient.REFERENCEABLE_ATTRIBUTE_NAME) should be (
+    schemaEntities(0).getAttribute("qualifiedName") should be (
       "db1.tbl1.user@primary")
 
     schemaEntities(1).getAttribute("name") should be ("age")
     schemaEntities(1).getAttribute("type") should be ("integer")
-    schemaEntities(1).getAttribute(AtlasClient.REFERENCEABLE_ATTRIBUTE_NAME) should be (
+    schemaEntities(1).getAttribute("qualifiedName") should be (
       "db1.tbl1.age@primary")
   }
 
@@ -122,18 +119,19 @@ class AtlasExternalEntityUtilsSuite extends FunSuite with Matchers with BeforeAn
     tableEntity.getAttribute("db") should be (dbEntity)
     tableEntity.getAttribute("sd") should be (sdEntity)
     tableEntity.getAttribute("columns") should be (schemaEntities.asJava)
-    tableEntity.getAttribute(AtlasClient.REFERENCEABLE_ATTRIBUTE_NAME) should be (
+    tableEntity.getAttribute("qualifiedName") should be (
       "db1.tbl1@primary")
   }
 
   test("convert path to entity") {
+    implicit val client = AtlasClient.atlasClient(hiveAtlasEntityUtils.conf)
     val tempFile = Files.createTempFile("tmp", ".txt").toFile
     val pathEntity = external.pathToEntity(tempFile.getAbsolutePath)
 
     pathEntity.getTypeName should be (external.FS_PATH_TYPE_STRING)
     pathEntity.getAttribute("name") should be (tempFile.getAbsolutePath.toLowerCase)
     pathEntity.getAttribute("path") should be (tempFile.getAbsolutePath.toLowerCase)
-    pathEntity.getAttribute(AtlasClient.REFERENCEABLE_ATTRIBUTE_NAME) should be (
+    pathEntity.getAttribute("qualifiedName") should be (
       tempFile.toURI.toString)
   }
 }

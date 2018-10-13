@@ -36,6 +36,16 @@ object metadata {
   val ML_FIT_PROCESS_TYPE_STRING = "spark_ml_fit_process"
   val ML_TRANSFORM_PROCESS_TYPE_STRING = "spark_ml_transform_process"
 
+  val SCHEME_SEPARATOR = "://"
+  val S3_SCHEME = "s3" + SCHEME_SEPARATOR
+  val S3A_SCHEME = "s3a" + SCHEME_SEPARATOR
+  val AWS_S3_BUCKET = "aws_s3_bucket"
+  val AWS_S3_PSEUDO_DIR = "aws_s3_pseudo_dir"
+  val AWS_S3_OBJECT = "aws_s3_object"
+
+  val ATTRIBUTE_BUCKET = "bucket"
+  val ATTRIBUTE_OBJECT_PREFIX = "objectPrefix"
+  
   import external._
 
   // ========= DB type =========

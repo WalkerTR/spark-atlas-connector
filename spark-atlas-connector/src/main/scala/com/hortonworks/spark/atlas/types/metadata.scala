@@ -36,6 +36,7 @@ object metadata {
   val ML_FIT_PROCESS_TYPE_STRING = "spark_ml_fit_process"
   val ML_TRANSFORM_PROCESS_TYPE_STRING = "spark_ml_transform_process"
 
+  val QNAME_SEP_CLUSTER_NAME = '@'
   val SCHEME_SEPARATOR = "://"
   val S3_SCHEME = "s3"
   val S3A_SCHEME = "s3a"
@@ -45,6 +46,7 @@ object metadata {
 
   val ATTRIBUTE_BUCKET = "bucket"
   val ATTRIBUTE_OBJECT_PREFIX = "objectPrefix"
+  val ATTRIBUTE_FOLDER = "pseudoDirectory"
 
   import external._
 

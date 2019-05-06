@@ -15,22 +15,14 @@
  * limitations under the License.
  */
 
-package com.hortonworks.spark.atlas
+package com.hortonworks.spark.atlas.sql
 
-import java.util.concurrent.atomic.AtomicLong
+case class KafkaTopicInformation(topicName: String, clusterName: Option[String] = None)
 
-import org.apache.atlas.model.instance.{AtlasEntity, AtlasObjectId}
-
-object AtlasUtils {
-  private val executionId = new AtomicLong(0L)
-
-  def entityToReference(entity: AtlasEntity, useGuid: Boolean = false): AtlasObjectId = {
-    if (useGuid) {
-      new AtlasObjectId(entity.getGuid)
-    } else {
-      new AtlasObjectId(entity.getTypeName, "qualifiedName", entity.getAttribute("qualifiedName"))
-    }
+object KafkaTopicInformation {
+  def getQualifiedName(ti: KafkaTopicInformation, defaultClusterName: String): String = {
+    val cName = ti.clusterName.getOrElse(defaultClusterName)
+    s"${ti.topicName}@$cName"
   }
-
-  def issueExecutionId(): Long = executionId.getAndIncrement()
 }
+

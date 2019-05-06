@@ -25,7 +25,6 @@ import com.hortonworks.spark.atlas.sql.testhelper.{AtlasQueryExecutionListener, 
 import com.hortonworks.spark.atlas.types.{external, metadata}
 import com.hortonworks.spark.atlas.utils.SparkUtils
 import com.hortonworks.spark.atlas.AtlasClientConf
-import com.hortonworks.spark.atlas.sql.streaming.KafkaTopicInformation
 import org.apache.atlas.model.instance.AtlasEntity
 import org.apache.commons.io.{FileUtils, IOUtils}
 import org.apache.spark.sql.kafka010.KafkaTestUtils
@@ -89,24 +88,17 @@ class SparkExecutionPlanProcessorForBatchQuerySuite
     assertTableEntity(tableEntity, outputTableName)
     assertSchemaEntities(tableEntity, entities)
 
-    // we're expecting three file system entities:
-    // one for input file, one for database warehouse, and one for output table (under
-    // database warehouse since it's a managed table).
+    // we're expecting one file system entities: input file
     val fsEntities = listAtlasEntitiesAsType(entities, external.FS_PATH_TYPE_STRING)
-    assert(fsEntities.size === 3)
+    assert(fsEntities.size === 1)
 
     val databaseEntity = getOnlyOneEntity(entities, metadata.DB_TYPE_STRING)
-    assertDatabaseEntity(databaseEntity, tableEntity, fsEntities, outputTableName)
-
-    val databaseLocationFsEntity = getAtlasEntityAttribute(databaseEntity, "locationUri")
-
-    val inputFsEntities = fsEntities.filterNot(_ == databaseLocationFsEntity)
-    assert(inputFsEntities.size === 2)
+    assertDatabaseEntity(databaseEntity, tableEntity, outputTableName)
 
     // input file
     // this code asserts on runtime that one of fs entity matches against source path
     val sourcePath = tempFile.toAbsolutePath.toString
-    val inputFsEntity = inputFsEntities.find { p =>
+    val inputFsEntity = fsEntities.find { p =>
       getStringAttribute(p, "name").toLowerCase(Locale.ROOT) == sourcePath.toLowerCase(Locale.ROOT)
     }.get
     assertInputFsEntity(inputFsEntity, sourcePath)
@@ -115,9 +107,10 @@ class SparkExecutionPlanProcessorForBatchQuerySuite
     val storageEntity = getOnlyOneEntity(entities, metadata.STORAGEDESC_TYPE_STRING)
     assertStorageDefinitionEntity(storageEntity, tableEntity)
 
-    val locationEntity = getAtlasEntityAttribute(storageEntity, "locationUri")
-    assert(getStringAttribute(locationEntity, "path").startsWith(
-      getStringAttribute(databaseLocationFsEntity, "path")))
+    val locationString = getStringAttribute(storageEntity, "location")
+    assert(locationString != null && locationString.nonEmpty)
+    assert(locationString.contains("spark-warehouse"))
+    assert(locationString.contains(outputTableName))
 
     // check for 'spark_process'
     val processEntity = getOnlyOneEntity(entities, metadata.PROCESS_TYPE_STRING)
@@ -163,34 +156,17 @@ class SparkExecutionPlanProcessorForBatchQuerySuite
     assertTableEntity(tableEntity, outputTableName)
     assertSchemaEntities(tableEntity, entities)
 
-    // we're expecting two file system entities:
-    // one for input file, one for database warehouse.
-    val fsEntities = listAtlasEntitiesAsType(entities, external.FS_PATH_TYPE_STRING)
-    assert(fsEntities.size === 2)
-
     // database
     val databaseEntity: AtlasEntity = getOnlyOneEntity(entities, metadata.DB_TYPE_STRING)
-    assertDatabaseEntity(databaseEntity, tableEntity, fsEntities, outputTableName)
-
-    val databaseLocationFsEntity = getAtlasEntityAttribute(databaseEntity, "locationUri")
-
-    // fs
-    val inputFsEntities = fsEntities.filterNot(_ == databaseLocationFsEntity)
-    assert(inputFsEntities.size === 1)
-
-    // input file
-    val inputFsEntity = inputFsEntities.find { p =>
-      getStringAttribute(p, "name").toLowerCase(Locale.ROOT) ==
-        tempDirPathStr.toLowerCase(Locale.ROOT)
-    }.get
-
-    assertInputFsEntity(inputFsEntity, tempDirPathStr)
+    assertDatabaseEntity(databaseEntity, tableEntity, outputTableName)
 
     // storage description
     val storageEntity = getOnlyOneEntity(entities, metadata.STORAGEDESC_TYPE_STRING)
     assertStorageDefinitionEntity(storageEntity, tableEntity)
 
-    assert(getAtlasEntityAttribute(storageEntity, "locationUri") === inputFsEntity)
+    val databaseLocationString = getStringAttribute(databaseEntity, "location")
+    assert(databaseLocationString != null && databaseLocationString.nonEmpty)
+    assert(databaseLocationString.contains("spark-warehouse"))
   }
 
   test("Save Spark table to Kafka via df.save()") {
@@ -283,9 +259,6 @@ class SparkExecutionPlanProcessorForBatchQuerySuite
 
     sendMessages(topics)
 
-    // NOTE: We can't verify Kafka input topics here as it requires custom patch.
-    // We can verify it when SAC relies on custom patched spark-sql-kafka module.
-
     // test for 'subscribePattern'
     val df1 = spark.read.format("kafka")
       .option("kafka.bootstrap.servers", kafkaTestUtils.brokerAddress)
@@ -325,12 +298,10 @@ class SparkExecutionPlanProcessorForBatchQuerySuite
 
     // kafka topic
 
-    // NOTE: Given we can't extract Kafka input topics without custom patched Spark,
-    // we have to give up verifying Kafka input topic entities. Commenting out.
-    // val inputKafkaEntities = listAtlasEntitiesAsType(entities, external.KAFKA_TOPIC_STRING)
-    // val expectedTopics = topics.map(KafkaTopicInformation(_, None))
-    // assertEntitiesKafkaTopicType(expectedTopics, entities.toSet)
-    val inputKafkaEntities = Seq.empty[AtlasEntity]
+    // actual topics in 'subscribePattern' cannot be retrieved - it's a limitation
+    val inputKafkaEntities = listAtlasEntitiesAsType(entities, external.KAFKA_TOPIC_STRING)
+    val expectedTopics = (topicsToRead2 ++ topicsToRead3).map(KafkaTopicInformation(_, None))
+    assertEntitiesKafkaTopicType(expectedTopics, entities.toSet)
 
     // We already have validations for table-relevant entities in other UTs,
     // so minimize validation here.
@@ -376,16 +347,11 @@ class SparkExecutionPlanProcessorForBatchQuerySuite
 
     sendMessages(topicsToRead)
 
-    // NOTE: We can't verify Kafka input topics here as it requires custom patch.
-    // We can verify it when SAC relies on custom patched spark-sql-kafka module.
-
     val df = spark.read.format("kafka")
       .option("kafka.bootstrap.servers", kafkaTestUtils.brokerAddress)
       .option("subscribe", topicsToRead.mkString(","))
       .option("startingOffsets", "earliest")
       .load()
-
-    // We still verify Kafka output topic with custom patch...
 
     val customClusterName = "customCluster"
     df.write
@@ -401,17 +367,18 @@ class SparkExecutionPlanProcessorForBatchQuerySuite
     val entities = atlasClient.createdEntities
 
     // kafka topic
+    val kafkaEntities = listAtlasEntitiesAsType(entities, external.KAFKA_TOPIC_STRING)
+    assert(kafkaEntities.size === topicsToRead.length + 1)
 
-    // NOTE: Given we can't extract Kafka topics without custom patched Spark,
-    // we have to give up verifying Kafka topic entities. Commenting out.
-    // val inputKafkaEntities = listAtlasEntitiesAsType(entities, external.KAFKA_TOPIC_STRING)
-    // val expectedTopics = topics.map(KafkaTopicInformation(_, None))
-    // assertEntitiesKafkaTopicType(expectedTopics, entities.toSet)
-    val inputKafkaEntities = Seq.empty[AtlasEntity]
+    val inputKafkaEntities = kafkaEntities.filter { entity =>
+      topicsToRead.contains(entity.getAttribute("name"))
+    }
+    val expectedTopics = topicsToRead.map(KafkaTopicInformation(_, None))
+    assertEntitiesKafkaTopicType(expectedTopics, inputKafkaEntities.toSet)
 
-    val kafkaEntity = listAtlasEntitiesAsType(entities, external.KAFKA_TOPIC_STRING)
-    assert(kafkaEntity.size === 1)
-    val outputEntities = kafkaEntity
+    val outputEntities = kafkaEntities.filter { entity =>
+      entity.getAttribute("name") == topicToWrite
+    }
 
     // check for 'spark_process'
     val processEntity = getOnlyOneEntity(entities, metadata.PROCESS_TYPE_STRING)
@@ -485,10 +452,10 @@ class SparkExecutionPlanProcessorForBatchQuerySuite
   private def assertSchemaEntities(tableEntity: AtlasEntity, entities: Seq[AtlasEntity]): Unit = {
     if (atlasClientConf.get(AtlasClientConf.ATLAS_SPARK_COLUMN_ENABLED).toBoolean) {
       val columnEntities = listAtlasEntitiesAsType(entities, metadata.COLUMN_TYPE_STRING)
-      val columnEntitiesInTableAttribute = getSeqAtlasEntityAttribute(tableEntity, "spark_schema")
+      val columnEntitiesInTableAttribute = getSeqAtlasEntityAttribute(tableEntity, "columns")
       assert(Set(columnEntities) === Set(columnEntitiesInTableAttribute))
     } else {
-      assert(!tableEntity.getAttributes.containsKey("spark_schema"))
+      assert(!tableEntity.getAttributes.containsKey("columns"))
       assert(listAtlasEntitiesAsType(entities, metadata.COLUMN_TYPE_STRING).isEmpty)
     }
   }
@@ -496,7 +463,6 @@ class SparkExecutionPlanProcessorForBatchQuerySuite
   private def assertDatabaseEntity(
       databaseEntity: AtlasEntity,
       tableEntity: AtlasEntity,
-      fsEntities: Seq[AtlasEntity],
       tableName: String)
     : Unit = {
     val tableQualifiedName = getStringAttribute(tableEntity, "qualifiedName")
@@ -510,10 +476,9 @@ class SparkExecutionPlanProcessorForBatchQuerySuite
     val databaseEntityInTable = getAtlasEntityAttribute(tableEntity, "db")
     assert(databaseEntity === databaseEntityInTable)
 
-    val databaseLocationFsEntity = getAtlasEntityAttribute(databaseEntity, "locationUri")
-
-    // database warehouse
-    assert(fsEntities.contains(databaseLocationFsEntity))
+    val databaseLocationString = getStringAttribute(databaseEntity, "location")
+    assert(databaseLocationString != null && databaseLocationString.nonEmpty)
+    assert(databaseLocationString.contains("spark-warehouse"))
   }
 
   private def assertInputFsEntity(fsEntity: AtlasEntity, sourcePath: String): Unit = {

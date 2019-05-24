@@ -55,7 +55,6 @@ object AtlasClientConf {
   case class ConfigEntry(key: String, defaultValue: String)
 
   val ATLAS_SPARK_ENABLED = ConfigEntry("atlas.spark.enabled", "true")
-  val ATLAS_SPARK_COLUMN_ENABLED = ConfigEntry("atlas.spark.column.enabled", "false")
 
   val ATLAS_REST_ENDPOINT = ConfigEntry("atlas.rest.address", "localhost:21000")
 
@@ -69,5 +68,5 @@ object AtlasClientConf {
 
   val CLUSTER_NAME = ConfigEntry("atlas.cluster.name", "primary")
 
-  val CHECK_MODEL_IN_START = ConfigEntry("atlas.client.checkModelInStart", "true")
+  val CHECK_MODEL_IN_START = ConfigEntry("atlas.client.checkModelInStart", "false")
 }

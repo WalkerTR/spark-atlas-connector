@@ -17,11 +17,10 @@
 
 package com.hortonworks.spark.atlas.sql
 
+import java.util.concurrent.TimeUnit
+
 import com.hortonworks.spark.atlas.sql.CommandsHarvester.WriteToDataSourceV2Harvester
 import com.hortonworks.spark.atlas.sql.SparkExecutionPlanProcessor.SinkDataSourceWriter
-
-import scala.collection.convert.Wrappers.SeqWrapper
-import org.apache.atlas.model.instance.AtlasEntity
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.command._
 import org.apache.spark.sql.execution.datasources.{InsertIntoHadoopFsRelationCommand, SaveIntoDataSourceCommand}
@@ -29,16 +28,31 @@ import org.apache.spark.sql.execution.datasources.v2.WriteToDataSourceV2Exec
 import org.apache.spark.sql.execution.streaming.sources.MicroBatchWriter
 import org.apache.spark.sql.hive.execution._
 import org.apache.spark.sql.sources.v2.writer.{DataWriterFactory, WriterCommitMessage}
-import com.hortonworks.spark.atlas.{AbstractEventProcessor, AtlasClient, AtlasClientConf}
-import com.hortonworks.spark.atlas.types.{external, metadata}
+import com.hortonworks.spark.atlas.{AbstractEventProcessor, AtlasClient, AtlasClientConf, AtlasUtils}
 import com.hortonworks.spark.atlas.utils.Logging
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.execution.streaming.StreamExecution
 import org.apache.spark.sql.sources.v2.writer.streaming.StreamWriter
 import org.apache.spark.sql.streaming.SinkProgress
+import org.apache.spark.sql.streaming.StreamingQueryListener.QueryProgressEvent
 
 
-case class QueryDetail(qe: QueryExecution, executionId: Long,
-  executionTime: Long, query: Option[String] = None, sink: Option[SinkProgress] = None)
+case class QueryDetail(
+    qe: QueryExecution,
+    executionId: Long,
+    query: Option[String] = None,
+    sink: Option[SinkProgress] = None)
+
+object QueryDetail {
+  def fromQueryExecutionListener(qe: QueryExecution, durationNs: Long): QueryDetail = {
+    QueryDetail(qe, AtlasUtils.issueExecutionId(), Option(SQLQuery.get()))
+  }
+
+  def fromStreamingQueryListener(qe: StreamExecution, event: QueryProgressEvent): QueryDetail = {
+    QueryDetail(qe.lastExecution, AtlasUtils.issueExecutionId(), None,
+      Some(event.progress.sink))
+  }
+}
 
 class SparkExecutionPlanProcessor(
     private[atlas] val atlasClient: AtlasClient,
@@ -142,34 +156,9 @@ class SparkExecutionPlanProcessor(
         }
       }
 
-      if (conf.get(AtlasClientConf.ATLAS_SPARK_COLUMN_ENABLED).toBoolean) {
-        atlasClient.createEntities(entities)
-        logDebug(s"Created entities with columns")
-      } else {
-        // We should handle both cases. The type values will be changed later.
-        val dbTypes = Seq(external.HIVE_TABLE_TYPE_STRING, metadata.TABLE_TYPE_STRING)
-        val excludedTypes = Seq(external.HIVE_COLUMN_TYPE_STRING, metadata.COLUMN_TYPE_STRING)
-        val cleanedEntities = entities
-          .filterNot(e => excludedTypes.contains(e.getTypeName))
-          .map {
-            case e if dbTypes.contains(e.getTypeName) =>
-              e.removeAttribute("columns")
-              e
-            case e if e.getTypeName.equals(metadata.PROCESS_TYPE_STRING) =>
-              Seq(e.getAttribute("inputs"), e.getAttribute("outputs")).foreach { list =>
-                list.asInstanceOf[SeqWrapper[AtlasEntity]].underlying.foreach { o =>
-                  o.removeAttribute("columns")
-                }
-              }
-              e
-            case e => e
-          }
-
-        atlasClient.createEntities(cleanedEntities)
-        logDebug(s"Created entities without columns")
-      }
-    }
-
+      atlasClient.createEntitiesWithDependencies(entities)
+      logDebug(s"Created entities without columns")
+  }
 }
 
 object SparkExecutionPlanProcessor {

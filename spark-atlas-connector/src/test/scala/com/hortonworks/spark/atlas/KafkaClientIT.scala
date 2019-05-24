@@ -56,17 +56,22 @@ class KafkaClientIT extends BaseResourceIT with Matchers {
     super.afterAll()
   }
 
-  it("create new entities") {
+  it("create / update / delete new entities") {
+    val dbName = uniqueName("db2")
+    val tbl1Name = uniqueName("tbl1")
+    val tbl3Name = uniqueName("tbl3")
+
     // Create new DB
     val tempDbPath = Files.createTempDirectory("db_")
-    val dbDefinition = createDB("db2", tempDbPath.normalize().toUri.toString)
+    val dbDefinition = createDB(dbName, tempDbPath.normalize().toUri.toString)
     SparkUtils.getExternalCatalog().createDatabase(dbDefinition, ignoreIfExists = true)
-    tracker.onOtherEvent(CreateDatabaseEvent("db2"))
+    tracker.onOtherEvent(CreateDatabaseEvent(dbName))
     eventually(timeout(30 seconds), interval(100 milliseconds)) {
       val entity = getEntity(
-        tracker.catalogEventTracker.dbType, tracker.catalogEventTracker.dbUniqueAttribute("db2"))
+        tracker.catalogEventTracker.sparkDbType,
+        tracker.catalogEventTracker.sparkDbUniqueAttribute(dbName))
       entity should not be (null)
-      entity.getAttribute("name") should be ("db2")
+      entity.getAttribute("name") should be (dbName)
     }
 
     // Create new table
@@ -74,72 +79,47 @@ class KafkaClientIT extends BaseResourceIT with Matchers {
       .add("user", StringType)
       .add("age", IntegerType)
     val sd = CatalogStorageFormat.empty
-    val tableDefinition = createTable("db2", "tbl1", schema, sd)
-    val isHiveTbl = tracker.catalogEventTracker.isHiveTable(tableDefinition)
+    val tableDefinition = createTable(dbName, tbl1Name, schema, sd)
     SparkUtils.getExternalCatalog().createTable(tableDefinition, ignoreIfExists = true)
-    tracker.onOtherEvent(CreateTableEvent("db2", "tbl1"))
+    tracker.onOtherEvent(CreateTableEvent(dbName, tbl1Name))
 
     eventually(timeout(30 seconds), interval(100 milliseconds)) {
-      val sdEntity = getEntity(tracker.catalogEventTracker.storageFormatType(isHiveTbl),
-        tracker.catalogEventTracker.storageFormatUniqueAttribute("db2", "tbl1", isHiveTbl))
+      val sdEntity = getEntity(tracker.catalogEventTracker.sparkStorageFormatType,
+        tracker.catalogEventTracker.sparkStorageFormatUniqueAttribute(dbName, tbl1Name))
       sdEntity should not be (null)
 
-      schema.foreach { s =>
-        val colEntity = getEntity(tracker.catalogEventTracker.columnType(isHiveTbl),
-          tracker.catalogEventTracker.columnUniqueAttribute("db2", "tbl1", s.name, isHiveTbl))
-        colEntity should not be (null)
-        colEntity.getAttribute("name") should be (s.name)
-        colEntity.getAttribute("type") should be (s.dataType.typeName)
-      }
-
-      val tblEntity = getEntity(tracker.catalogEventTracker.tableType(isHiveTbl),
-        tracker.catalogEventTracker.tableUniqueAttribute("db2", "tbl1", isHiveTbl))
+      val tblEntity = getEntity(tracker.catalogEventTracker.sparkTableType,
+        tracker.catalogEventTracker.sparkTableUniqueAttribute(dbName, tbl1Name))
       tblEntity should not be (null)
-      tblEntity.getAttribute("name") should be ("tbl1")
+      tblEntity.getAttribute("name") should be (tbl1Name)
     }
-  }
-
-  it("update entities") {
-    val schema = new StructType()
-      .add("user", StringType)
-      .add("age", IntegerType)
 
     // Rename table
-    SparkUtils.getExternalCatalog().renameTable("db2", "tbl1", "tbl3")
-    tracker.onOtherEvent(RenameTableEvent("db2", "tbl1", "tbl3"))
-    val newTblDef = SparkUtils.getExternalCatalog().getTable("db2", "tbl3")
-    val isHiveTbl = tracker.catalogEventTracker.isHiveTable(newTblDef)
+    SparkUtils.getExternalCatalog().renameTable(dbName, tbl1Name, tbl3Name)
+    tracker.onOtherEvent(RenameTableEvent(dbName, tbl1Name, tbl3Name))
+    val newTblDef = SparkUtils.getExternalCatalog().getTable(dbName, tbl3Name)
 
     eventually(timeout(30 seconds), interval(100 milliseconds)) {
-      val tblEntity = getEntity(tracker.catalogEventTracker.tableType(isHiveTbl),
-        tracker.catalogEventTracker.tableUniqueAttribute("db2", "tbl3", isHiveTbl))
+      val tblEntity = getEntity(tracker.catalogEventTracker.sparkTableType,
+        tracker.catalogEventTracker.sparkTableUniqueAttribute(dbName, tbl3Name))
       tblEntity should not be (null)
-      tblEntity.getAttribute("name") should be ("tbl3")
+      tblEntity.getAttribute("name") should be (tbl3Name)
 
-      schema.foreach { s =>
-        val colEntity = getEntity(tracker.catalogEventTracker.columnType(isHiveTbl),
-          tracker.catalogEventTracker.columnUniqueAttribute("db2", "tbl3", s.name, isHiveTbl))
-        colEntity should not be (null)
-        colEntity.getAttribute("name") should be (s.name)
-        colEntity.getAttribute("type") should be (s.dataType.typeName)
-      }
-
-      val sdEntity = getEntity(tracker.catalogEventTracker.storageFormatType(isHiveTbl),
-        tracker.catalogEventTracker.storageFormatUniqueAttribute("db2", "tbl3", isHiveTbl))
+      val sdEntity = getEntity(tracker.catalogEventTracker.sparkStorageFormatType,
+        tracker.catalogEventTracker.sparkStorageFormatUniqueAttribute(dbName, tbl3Name))
       sdEntity should not be (null)
     }
-  }
 
-  it("remove entities") {
     // Drop table
-    val tblDef = SparkUtils.getExternalCatalog().getTable("db2", "tbl3")
-    val isHiveTbl = tracker.catalogEventTracker.isHiveTable(tblDef)
-    tracker.onOtherEvent(DropTablePreEvent("db2", "tbl3"))
-    tracker.onOtherEvent(DropTableEvent("db2", "tbl3"))
+    tracker.onOtherEvent(DropTablePreEvent(dbName, tbl3Name))
+    tracker.onOtherEvent(DropTableEvent(dbName, tbl3Name))
 
-    eventually(timeout(30 seconds), interval(100 milliseconds)) {
-      intercept[AtlasServiceException](getEntity(tracker.catalogEventTracker.tableType(isHiveTbl),
-        tracker.catalogEventTracker.tableUniqueAttribute("db2", "tbl3", isHiveTbl)))
-    }
+    // sleeping 2 secs - we have to do this to ensure there's no call on deletion, unfortunately...
+    Thread.sleep(2 * 1000)
+    // deletion request should not be added
+    val tblEntity = getEntity(tracker.catalogEventTracker.sparkTableType,
+      tracker.catalogEventTracker.sparkTableUniqueAttribute(dbName, tbl3Name))
+    tblEntity should not be (null)
   }
+
 }

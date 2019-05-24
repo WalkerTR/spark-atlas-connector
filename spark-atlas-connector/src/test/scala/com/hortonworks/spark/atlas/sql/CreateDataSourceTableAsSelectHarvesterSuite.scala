@@ -17,10 +17,12 @@
 
 package com.hortonworks.spark.atlas.sql
 
-import scala.util.Random
+import com.hortonworks.spark.atlas.types.metadata
 
-import com.hortonworks.spark.atlas.WithHiveSupport
+import scala.util.Random
+import com.hortonworks.spark.atlas.{SACAtlasEntityWithDependencies, WithHiveSupport}
 import com.hortonworks.spark.atlas.utils.SparkUtils
+import org.apache.atlas.model.instance.AtlasEntity
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.execution.command.CreateDataSourceTableAsSelectCommand
@@ -28,7 +30,8 @@ import org.apache.spark.sql.execution.datasources.DataSource
 import org.apache.spark.sql.types.StructType
 import org.scalatest.{FunSuite, Matchers}
 
-
+// This is not leveraging BaseHarvesterSuite, as it doesn't need to be tested with
+// both non-remote HMS and remote HMS cases.
 class CreateDataSourceTableAsSelectHarvesterSuite
     extends FunSuite with Matchers with WithHiveSupport {
 
@@ -40,7 +43,16 @@ class CreateDataSourceTableAsSelectHarvesterSuite
     sparkSession.sql(s"CREATE TABLE $sourceTblName (name string, age int)")
   }
 
-  test("saveAsTable should have output entity having table details") {
+  test("saveAsTable should have output entity having table details - parquet") {
+    testWithProvider("parquet")
+  }
+
+  test("saveAsTable should have output entity having table details - hive") {
+    val entity = testWithProvider("hive")
+    assert(entity.getAttribute("partitionProvider") == "Catalog")
+  }
+
+  def testWithProvider(provider: String): AtlasEntity = {
     val destTblName = "dest1_" + Random.nextInt(100000)
     val df = sparkSession.sql(s"SELECT * FROM $sourceTblName")
 
@@ -54,7 +66,7 @@ class CreateDataSourceTableAsSelectHarvesterSuite
       tableType = CatalogTableType.EXTERNAL,
       storage = storage,
       schema = new StructType,
-      provider = Some("parquet"),
+      provider = Some(provider),
       partitionColumnNames = Nil,
       bucketSpec = None)
     val cmd = CreateDataSourceTableAsSelectCommand(
@@ -68,12 +80,17 @@ class CreateDataSourceTableAsSelectHarvesterSuite
     sparkSession.sessionState.catalog.createTable(
       newTable, ignoreIfExists = false, validateLocation = false)
 
-    val qd = QueryDetail(df.queryExecution, 0L, 0L)
+    val qd = QueryDetail(df.queryExecution, 0L)
     val entities = CommandsHarvester.CreateDataSourceTableAsSelectHarvester.harvest(cmd, qd)
-    val maybeEntity = entities.find(e => e.getTypeName == "spark_table")
+    val processDeps = entities.head.asInstanceOf[SACAtlasEntityWithDependencies].dependencies
+    val maybeEntity = processDeps.find(_.typeName == metadata.TABLE_TYPE_STRING)
+      .map(_.asInstanceOf[SACAtlasEntityWithDependencies].entity)
 
     assert(maybeEntity.isDefined, s"Output entity for table [$destTblName] was not found.")
     assert(maybeEntity.get.getAttribute("name") == destTblName)
     assert(maybeEntity.get.getAttribute("owner") == SparkUtils.currUser())
+    assert(maybeEntity.get.getAttribute("schemaDesc") == "struct<name:string,age:int>")
+    assert(maybeEntity.get.getAttribute("provider") == provider)
+    maybeEntity.get
   }
 }

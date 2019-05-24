@@ -23,17 +23,14 @@ import java.util
 import scala.util.Random
 import scala.collection.JavaConverters._
 import org.scalatest.Matchers
-
 import org.apache.commons.io.FileUtils
-import org.apache.atlas.model.instance.AtlasEntity
-
+import org.apache.atlas.model.instance.{AtlasEntity, AtlasObjectId}
 import org.apache.spark.ml.Pipeline
 import org.apache.spark.ml.feature.Tokenizer
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
 import org.apache.spark.sql.execution.datasources.InsertIntoHadoopFsRelationCommand
-
-import com.hortonworks.spark.atlas.{BaseResourceIT, WithHiveSupport}
+import com.hortonworks.spark.atlas._
 import com.hortonworks.spark.atlas.sql.{CommandsHarvester, QueryDetail}
 import com.hortonworks.spark.atlas.types.internal
 
@@ -85,7 +82,7 @@ class MLPipelineWithSaveIntoSuite extends BaseResourceIT with Matchers with With
     val qe = sparkSession.sql(s"INSERT INTO TABLE $destinationSparkTblName " +
       s"SELECT text FROM $sourceSparkTblName").queryExecution
 
-    val qd = QueryDetail(qe, 0L, 0L)
+    val qd = QueryDetail(qe, 0L)
 
     assert(qe.sparkPlan.isInstanceOf[DataWritingCommandExec])
     val node = qe.sparkPlan.asInstanceOf[DataWritingCommandExec]
@@ -93,12 +90,15 @@ class MLPipelineWithSaveIntoSuite extends BaseResourceIT with Matchers with With
     val cmd = node.cmd.asInstanceOf[InsertIntoHadoopFsRelationCommand]
 
     val entities = CommandsHarvester.InsertIntoHadoopFsRelationHarvester.harvest(cmd, qd)
-    val pEntity = entities.head
+    val pEntity = entities.head.asInstanceOf[SACAtlasEntityWithDependencies].entity
 
     val pUid1 = pEntity.getGuid
-    val inputs = pEntity.getAttribute("inputs").asInstanceOf[util.Collection[AtlasEntity]]
+    val inputs = pEntity.getAttribute("inputs").asInstanceOf[util.Collection[AtlasObjectId]]
     inputs.size() should be (1)
+
     val inputTab = inputs.asScala.head
+    val inputEntity = TestUtils.findEntity(
+      entities.head.asInstanceOf[SACAtlasEntityWithDependencies].dependencies, inputTab).get
 
     // Test for the model training process
     val uri = "hdfs://"
@@ -121,9 +121,10 @@ class MLPipelineWithSaveIntoSuite extends BaseResourceIT with Matchers with With
       (s"Spark ML training model with pipeline uid: ${pipeline.uid}"))
 
     val processEntity = internal.etlProcessToEntity(
-      List(pipelineEntity, inputTab), List(modelEntity), logMap)
+      Seq(pipelineEntity, inputEntity),
+      Seq(modelEntity), logMap)
 
-    val pUid2 = processEntity.getGuid
+    val pUid2 = processEntity.entity.getGuid
     // DF process and ML process should be the same process ID
     pUid1 should be equals pUid2
   }
@@ -133,7 +134,7 @@ class MLPipelineWithSaveIntoSuite extends BaseResourceIT with Matchers with With
     val qe = sparkSession.sql(s"INSERT INTO TABLE $destinationSparkTblName " +
       s"SELECT text FROM $sourceSparkTblName").queryExecution
 
-    val qd = QueryDetail(qe, 0L, 0L)
+    val qd = QueryDetail(qe, 0L)
 
     assert(qe.sparkPlan.isInstanceOf[DataWritingCommandExec])
     val node = qe.sparkPlan.asInstanceOf[DataWritingCommandExec]
@@ -141,11 +142,14 @@ class MLPipelineWithSaveIntoSuite extends BaseResourceIT with Matchers with With
     val cmd = node.cmd.asInstanceOf[InsertIntoHadoopFsRelationCommand]
 
     val entities = CommandsHarvester.InsertIntoHadoopFsRelationHarvester.harvest(cmd, qd)
-    val pEntity1 = entities.head
+    val pEntity1 = entities.head.asInstanceOf[SACAtlasEntityWithDependencies].entity
 
-    val inputs = pEntity1.getAttribute("inputs").asInstanceOf[util.Collection[AtlasEntity]]
+    val inputs = pEntity1.getAttribute("inputs").asInstanceOf[util.Collection[AtlasObjectId]]
     inputs.size() should be (1)
+
     val inputTab = inputs.asScala.head
+    val inputEntity = TestUtils.findEntity(
+      entities.head.asInstanceOf[SACAtlasEntityWithDependencies].dependencies, inputTab).get
 
     // Test for the model training process
     val uri = "hdfs://"
@@ -168,11 +172,12 @@ class MLPipelineWithSaveIntoSuite extends BaseResourceIT with Matchers with With
       (s"Spark ML training model with pipeline uid: ${pipeline.uid}"))
 
     val fitProcessEntity = internal.etlProcessToEntity(
-      List(pipelineEntity, inputTab), List(modelEntity), logMap)
+      Seq(pipelineEntity, inputEntity),
+      Seq(modelEntity), logMap)
 
-    pEntity1.getGuid should be equals fitProcessEntity.getGuid
+    pEntity1.getGuid should be equals fitProcessEntity.entity.getGuid
 
-    internal.cachedObjects.put("fit_process", fitProcessEntity.getGuid)
+    internal.cachedObjects.put("fit_process", fitProcessEntity.entity.getGuid)
 
     // Test for data transform process
     val df2 = model.transform(trainData)
@@ -191,20 +196,24 @@ class MLPipelineWithSaveIntoSuite extends BaseResourceIT with Matchers with With
     assert(node2.cmd.isInstanceOf[InsertIntoHadoopFsRelationCommand])
     val cmd2 = node2.cmd.asInstanceOf[InsertIntoHadoopFsRelationCommand]
 
-    val qd2 = QueryDetail(qe, 0L, 0L)
+    val qd2 = QueryDetail(qe, 0L)
     val entities2 = CommandsHarvester.InsertIntoHadoopFsRelationHarvester.harvest(cmd2, qd2)
-    val pEntity2 = entities2.head
+    val pEntity2 = entities2.head.asInstanceOf[SACAtlasEntityWithDependencies].entity
 
     // This input is the output of ML scoring job
-    val inputs2 = pEntity2.getAttribute("inputs").asInstanceOf[util.Collection[AtlasEntity]]
+    val inputs2 = pEntity2.getAttribute("inputs").asInstanceOf[util.Collection[AtlasObjectId]]
     inputs2.size() should be (1)
+
+    val input2Tab = inputs2.asScala.head
+    val input2Entity = TestUtils.findEntity(
+      entities2.head.asInstanceOf[SACAtlasEntityWithDependencies].dependencies, input2Tab).get
 
     val logMap2 = Map("sparkPlanDescription" ->
       (s"Spark ML scoring model with pipeline uid: ${pipeline.uid} and model uid: ${model.uid}"))
 
-    val entities3 = internal.updateMLProcessToEntity(List(inputs.asScala.head),
-      List(inputs2.asScala.head), logMap2)
-    val pEntity3 = entities3.head
+    val entities3 = internal.updateMLProcessToEntity(
+      Seq(inputEntity), Seq(input2Entity), logMap2)
+    val pEntity3 = entities3.entity
 
     pEntity2.getGuid should be equals pEntity3.getGuid
 

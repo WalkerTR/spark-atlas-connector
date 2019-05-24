@@ -17,24 +17,28 @@
 
 package com.hortonworks.spark.atlas.types
 
-import com.google.common.collect.{ImmutableMap, ImmutableSet}
+import com.google.common.collect.ImmutableSet
 import org.apache.atlas.AtlasConstants
 import org.apache.atlas.`type`.AtlasBuiltInTypes.{AtlasBooleanType, AtlasDateType, AtlasLongType, AtlasStringType}
 import org.apache.atlas.`type`.{AtlasArrayType, AtlasMapType, AtlasTypeUtil}
-import org.apache.atlas.model.typedef.AtlasStructDef.AtlasConstraintDef
+import org.apache.atlas.model.typedef.AtlasRelationshipDef.{PropagateTags, RelationshipCategory}
+import org.apache.atlas.model.typedef.AtlasRelationshipEndDef
+import org.apache.atlas.model.typedef.AtlasStructDef.AtlasAttributeDef.Cardinality
 
 object metadata {
   val METADATA_VERSION = "1.0"
   val DB_TYPE_STRING = "spark_db"
   val STORAGEDESC_TYPE_STRING = "spark_storagedesc"
-  val COLUMN_TYPE_STRING = "spark_column"
   val TABLE_TYPE_STRING = "spark_table"
+  val TABLE_DB_RELATIONSHIP_TYPE_STRING = "spark_table_db_rel"
+  val TABLE_COLUMNS_RELATIONSHIP_TYPE_STRING = "spark_table_columns_rel"
+  val TABLE_STORAGEDESC_RELATIONSHIP_TYPE_STRING: String = "spark_table_storagedesc_rel"
   val PROCESS_TYPE_STRING = "spark_process"
   val ML_DIRECTORY_TYPE_STRING = "spark_ml_directory"
   val ML_PIPELINE_TYPE_STRING = "spark_ml_pipeline"
   val ML_MODEL_TYPE_STRING = "spark_ml_model"
-
-  import external._
+  val ML_PIPELINE_DIRECTORY_RELATIONSHIP_TYPE_STRING = "spark_ml_pipeline_directory_rel"
+  val ML_MODEL_DIRECTORY_RELATIONSHIP_TYPE_STRING = "spark_ml_model_directory_rel"
 
   // ========= DB type =========
   val DB_TYPE = AtlasTypeUtil.createClassTypeDef(
@@ -66,30 +70,7 @@ object metadata {
     AtlasTypeUtil.createOptionalAttrDef("serde", new AtlasStringType),
     AtlasTypeUtil.createRequiredAttrDef("compressed", new AtlasBooleanType),
     AtlasTypeUtil.createOptionalAttrDef(
-      "parameters", new AtlasMapType(new AtlasStringType, new AtlasStringType)),
-    AtlasTypeUtil.createOptionalAttrDefWithConstraint(
-      "table",
-      TABLE_TYPE_STRING,
-      AtlasConstraintDef.CONSTRAINT_TYPE_INVERSE_REF,
-      ImmutableMap.of(AtlasConstraintDef.CONSTRAINT_PARAM_ATTRIBUTE, "sd")))
-
-  // ========= Column type =========
-  val COLUMN_TYPE = AtlasTypeUtil.createClassTypeDef(
-    COLUMN_TYPE_STRING,
-    "",
-    METADATA_VERSION,
-    ImmutableSet.of("DataSet"),
-    AtlasTypeUtil.createUniqueRequiredAttrDef(
-      "qualifiedName", new AtlasStringType),
-    AtlasTypeUtil.createRequiredAttrDef("type", new AtlasStringType),
-    AtlasTypeUtil.createOptionalAttrDef("nullable", new AtlasBooleanType),
-    AtlasTypeUtil.createOptionalAttrDef("metadata", new AtlasStringType),
-    AtlasTypeUtil.createOptionalAttrDef("comment", new AtlasStringType),
-    AtlasTypeUtil.createOptionalAttrDefWithConstraint(
-      "table",
-      TABLE_TYPE_STRING,
-      AtlasConstraintDef.CONSTRAINT_TYPE_INVERSE_REF,
-      ImmutableMap.of(AtlasConstraintDef.CONSTRAINT_PARAM_ATTRIBUTE, "columns")))
+      "parameters", new AtlasMapType(new AtlasStringType, new AtlasStringType)))
 
   // ========= Table type =========
   val TABLE_TYPE = AtlasTypeUtil.createClassTypeDef(
@@ -99,15 +80,10 @@ object metadata {
     ImmutableSet.of("DataSet"),
     AtlasTypeUtil.createUniqueRequiredAttrDef(
       "qualifiedName", new AtlasStringType),
-    AtlasTypeUtil.createOptionalAttrDef("db", DB_TYPE_STRING),
     AtlasTypeUtil.createOptionalAttrDef("tableType", new AtlasStringType),
-    AtlasTypeUtil.createOptionalAttrDefWithConstraint(
-      "sd", STORAGEDESC_TYPE_STRING, AtlasConstraintDef.CONSTRAINT_TYPE_OWNED_REF, null),
-    AtlasTypeUtil.createOptionalAttrDefWithConstraint(
-      "columns",
-      "array<spark_column>",
-      AtlasConstraintDef.CONSTRAINT_TYPE_OWNED_REF, null),
+    AtlasTypeUtil.createOptionalAttrDef("schemaDesc", new AtlasStringType),
     AtlasTypeUtil.createOptionalAttrDef("provider", new AtlasStringType),
+    AtlasTypeUtil.createOptionalAttrDef("partitionProvider", new AtlasStringType),
     AtlasTypeUtil.createOptionalAttrDef(
       "partitionColumnNames", new AtlasArrayType(new AtlasStringType)),
     AtlasTypeUtil.createOptionalAttrDef(
@@ -122,6 +98,27 @@ object metadata {
       "unsupportedFeatures", new AtlasArrayType(new AtlasStringType)),
     AtlasTypeUtil.createOptionalAttrDef("viewOriginalText", new AtlasStringType))
 
+  // ========= Table-related relationship types =========
+  val TABLE_DB_RELATIONSHIP_TYPE = AtlasTypeUtil.createRelationshipTypeDef(
+    TABLE_DB_RELATIONSHIP_TYPE_STRING,
+    "",
+    METADATA_VERSION,
+    RelationshipCategory.ASSOCIATION,
+    PropagateTags.ONE_TO_TWO,
+    new AtlasRelationshipEndDef(TABLE_TYPE_STRING, "db", Cardinality.SINGLE),
+    new AtlasRelationshipEndDef(DB_TYPE_STRING, "tables", Cardinality.SET)
+  )
+
+  val TABLE_STORAGEDESC_RELATIONSHIP_TYPE = AtlasTypeUtil.createRelationshipTypeDef(
+    TABLE_STORAGEDESC_RELATIONSHIP_TYPE_STRING,
+    "",
+    METADATA_VERSION,
+    RelationshipCategory.ASSOCIATION,
+    PropagateTags.ONE_TO_TWO,
+    new AtlasRelationshipEndDef(TABLE_TYPE_STRING, "sd", Cardinality.SINGLE),
+    new AtlasRelationshipEndDef(STORAGEDESC_TYPE_STRING, "table", Cardinality.SINGLE)
+  )
+
   // ========= Process type =========
   val PROCESS_TYPE = AtlasTypeUtil.createClassTypeDef(
     PROCESS_TYPE_STRING,
@@ -133,7 +130,6 @@ object metadata {
     AtlasTypeUtil.createOptionalAttrDef("executionId", new AtlasLongType),
     AtlasTypeUtil.createOptionalAttrDef("currUser", new AtlasStringType),
     AtlasTypeUtil.createOptionalAttrDef("remoteUser", new AtlasStringType),
-    AtlasTypeUtil.createOptionalAttrDef("executionTime", new AtlasLongType),
     AtlasTypeUtil.createOptionalAttrDef("details", new AtlasStringType),
     AtlasTypeUtil.createOptionalAttrDef("sparkPlanDescription", new AtlasStringType))
 
@@ -156,7 +152,6 @@ object metadata {
     ImmutableSet.of("DataSet"),
     AtlasTypeUtil.createUniqueRequiredAttrDef(
       "qualifiedName", new AtlasStringType),
-    AtlasTypeUtil.createRequiredAttrDef("directory", ML_DIRECTORY_TYPE_STRING),
     AtlasTypeUtil.createOptionalAttrDef("description", new AtlasStringType),
     AtlasTypeUtil.createOptionalAttrDef("extra", new AtlasStringType))
 
@@ -168,8 +163,29 @@ object metadata {
     ImmutableSet.of("DataSet"),
     AtlasTypeUtil.createUniqueRequiredAttrDef(
       "qualifiedName", new AtlasStringType),
-    AtlasTypeUtil.createRequiredAttrDef("directory", ML_DIRECTORY_TYPE_STRING),
     AtlasTypeUtil.createOptionalAttrDef("description", new AtlasStringType),
     AtlasTypeUtil.createOptionalAttrDef("extra", new AtlasStringType))
+
+  // ========= ML-related relationship types =========
+
+  val ML_PIPELINE_DIRECTORY_RELATIONSHIP_TYPE = AtlasTypeUtil.createRelationshipTypeDef(
+    ML_PIPELINE_DIRECTORY_RELATIONSHIP_TYPE_STRING,
+    "",
+    METADATA_VERSION,
+    RelationshipCategory.ASSOCIATION,
+    PropagateTags.ONE_TO_TWO,
+    new AtlasRelationshipEndDef(ML_PIPELINE_TYPE_STRING, "directory", Cardinality.SINGLE),
+    new AtlasRelationshipEndDef(ML_DIRECTORY_TYPE_STRING, "pipeline", Cardinality.SINGLE)
+  )
+
+  val ML_MODEL_DIRECTORY_RELATIONSHIP_TYPE = AtlasTypeUtil.createRelationshipTypeDef(
+    ML_MODEL_DIRECTORY_RELATIONSHIP_TYPE_STRING,
+    "",
+    METADATA_VERSION,
+    RelationshipCategory.ASSOCIATION,
+    PropagateTags.ONE_TO_TWO,
+    new AtlasRelationshipEndDef(ML_MODEL_TYPE_STRING, "directory", Cardinality.SINGLE),
+    new AtlasRelationshipEndDef(ML_DIRECTORY_TYPE_STRING, "model", Cardinality.SINGLE)
+  )
 
 }
